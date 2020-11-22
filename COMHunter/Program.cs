@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.Win32;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -57,19 +58,66 @@ namespace COMHunter
                 {
                     // Collect InProcServer32 values
                     string svrObj = Convert.ToString(queryObj[type]);
+                    string svrObj_clid = Convert.ToString(queryObj);
                     string svr = Environment.ExpandEnvironmentVariables(svrObj).Trim('"');
 
                     if (!string.IsNullOrEmpty(svr)
                         && svr.ToLower().StartsWith(@"c:\") // Filter out things like combase.dll and ole32.dll
                         && !svr.ToLower().Contains(@"c:\windows\") // Ignore OS components
-                        && File.Exists(svr)) // Make sure the file exists
+                        || svr.Contains(@"mscoree")
+                        ) // Make sure the file exists
                     {
-                        comServers.Add(new COMServer
+                       if (!svr.Contains(@"mscoree.dll")){
+                            if (File.Exists(svr))
+                            {
+                                comServers.Add(new COMServer
+                                {
+                                    CLSID = queryObj["ComponentId"].ToString(),
+                                    ServerPath = svr,
+                                    Type = type
+                                });
+                            }
+                        }
+                        else
                         {
-                            CLSID = queryObj["ComponentId"].ToString(),
-                            ServerPath = svr,
-                            Type = type
-                        });
+                            try
+                            {
+                                RegistryKey localMachine;
+                                if (Directory.Exists("C:\\Windows\\SysWOW64"))
+                                { 
+                                    localMachine = RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry64); 
+                                }
+                                else { 
+                                    localMachine = Registry.LocalMachine;
+                                }
+
+                                String subkey = @"SOFTWARE\\Classes\\CLSID\\" + queryObj["ComponentId"].ToString()+ @"\\InprocServer32";
+                                using (RegistryKey key = localMachine.OpenSubKey(subkey))
+                                    {
+                                    if (key != null)
+                                    {
+                                        Object o = key.GetValue("CodeBase");
+                                        
+                                        // Modify this line to tune the search
+                                        if ((o != null)
+                                            && (!o.ToString().ToLower().Replace("\\","/").Contains(@"c:/windows/"))
+                                            )
+                                        {
+                                            comServers.Add(new COMServer {
+                                                CLSID = queryObj["ComponentId"].ToString(),
+                                                ServerPath = key.GetValue("CodeBase").ToString().Replace(@"file:///",""),
+                                                Type = type
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine("[!] Error parsing the registry for: " + queryObj["ComponentId"].ToString());
+                                Console.Write("[!] " + ex.ToString());
+                            }
+                        }                        
                     }
                 }
             }
